@@ -39,8 +39,9 @@ launch_binjari.bat
 !.env.*.example
 !.env.example
 
-# 인증 DB (OAuth 토큰 등 비밀 포함)
+# 인증 DB (OAuth 토큰 등 비밀 포함) + 토큰 암호화 키
 *.db
+*.db.key
 
 # Claude Code 로컬 설정 (개인 권한/환경)
 .claude/settings.local.json

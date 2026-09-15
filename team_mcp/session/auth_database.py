@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 import logging
 
+from .token_crypto import TokenCipher
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,6 +38,7 @@ class AuthDatabase:
         self.db_path = resolved_path
         # 기본 app_id (환경 변수에서 가져옴)
         self.default_client_id = os.getenv('AZURE_CLIENT_ID')
+        self._cipher = TokenCipher(self.db_path)
         self.ensure_tables()
         self.ensure_default_app()
 
@@ -266,9 +269,9 @@ class AuthDatabase:
                     updated_at = CURRENT_TIMESTAMP
             """, (
                 email,
-                token_info.get('access_token'),
-                token_info.get('refresh_token'),
-                token_info.get('id_token'),
+                self._cipher.encrypt(token_info.get('access_token')),
+                self._cipher.encrypt(token_info.get('refresh_token')),
+                self._cipher.encrypt(token_info.get('id_token')),
                 token_info.get('expires_at'),  # access token 만료 시간
                 refresh_expires_at,  # refresh token 만료 시간 (신규 row일 때만 사용)
                 token_info.get('scope')
@@ -313,6 +316,9 @@ class AuthDatabase:
             row = cursor.fetchone()
             if row:
                 token = dict(row)
+                token['access_token'] = self._cipher.decrypt(token.get('access_token'))
+                token['refresh_token'] = self._cipher.decrypt(token.get('refresh_token'))
+                token['id_token'] = self._cipher.decrypt(token.get('id_token'))
                 # Convert access_token_expires_at string to datetime if needed
                 if isinstance(token.get('access_token_expires_at'), str):
                     token['access_token_expires_at'] = datetime.fromisoformat(
@@ -483,6 +489,7 @@ class AuthDatabase:
         finally:
             conn.close()
 
+    def migrate_from_old_tables(self) -> bool:
         """
         기존 users/tokens 테이블에서 azure_* 테이블로 마이그레이션
 
@@ -506,18 +513,20 @@ class AuthDatabase:
             """)
 
             # 2. tokens -> azure_token_info 마이그레이션
-            cursor.execute("""
-                INSERT OR IGNORE INTO azure_token_info (
-                    user_email, access_token, refresh_token,
-                    access_token_expires_at, scope, updated_at
-                )
-                SELECT
-                    email, access_token, refresh_token,
-                    access_token_expires_at, scope, updated_at
-                FROM tokens
-            """)
-
+            # (save_token() 을 거쳐야 access_token/refresh_token 이 암호화되어 들어간다 —
+            #  raw INSERT...SELECT 로 옮기면 평문 그대로 복사돼 버린다.)
+            cursor.execute("SELECT email, access_token, refresh_token, access_token_expires_at, scope FROM tokens")
+            old_tokens = cursor.fetchall()
             conn.commit()
+
+            for email, access_token, refresh_token, expires_at, scope in old_tokens:
+                self.save_token(email, {
+                    "access_token": access_token,
+                    "refresh_token": refresh_token,
+                    "expires_at": expires_at,
+                    "scope": scope,
+                })
+
             logger.info("Migration from old tables completed")
             return True
 
