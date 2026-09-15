@@ -19,7 +19,22 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
+import platformdirs
+
 LOGGER = logging.getLogger("ktx_watcher_spa.chrome_launcher")
+
+
+def _default_user_data_dir() -> Path:
+    """KTXA_CDP_USER_DATA_DIR 미설정 시 쓸 전용 프로필 경로.
+
+    최신 Chrome(2025년 이후 버전)은 보안 정책상 **기본 프로필**로는
+    --remote-debugging-port 를 거부한다 — CDP 포트가 열리지 않고, 대신
+    이미 떠 있는 사용자의 평소 Chrome 창에 about:blank 탭만 하나 얹힌 뒤
+    끝나버린다 (겉보기엔 "빈 탭만 뜨고 아무 일도 안 일어남"). user_data_dir
+    를 아예 지정하지 않는 게 오히려 흔한 실패 원인이라, 비워뒀을 때도
+    이 워처만 쓰는 전용 프로필 폴더를 자동으로 잡아준다.
+    """
+    return Path(platformdirs.user_data_dir("binjari")) / "chrome-cdp-profile"
 
 
 def _force_ipv4_for_localhost() -> None:
@@ -126,7 +141,7 @@ class ChromeLauncher:
     ) -> None:
         self.port = port
         self.user_data_dir = (
-            Path(user_data_dir).expanduser() if user_data_dir else None
+            Path(user_data_dir).expanduser() if user_data_dir else _default_user_data_dir()
         )
         self.exe_path = exe_path or self._find_chrome_exe()
         self.startup_timeout = startup_timeout
@@ -172,7 +187,10 @@ class ChromeLauncher:
             args.append(f"--user-data-dir={self.user_data_dir}")
         args.append("about:blank")
 
-        LOGGER.info("Chrome 디버그 모드 기동: %s (port=%d)", self.exe_path, self.port)
+        LOGGER.info(
+            "Chrome 디버그 모드 기동: %s (port=%d, user_data_dir=%s)",
+            self.exe_path, self.port, self.user_data_dir,
+        )
         # stdout/stderr 는 무시 (Chrome 이 콘솔에 잡히면 종료 시 같이 죽음 회피)
         self._proc = subprocess.Popen(
             args,

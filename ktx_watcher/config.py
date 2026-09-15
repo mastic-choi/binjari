@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import date, datetime, time
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -12,6 +13,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 
 ENV_FILES = (Path(".env.ktx"), Path("env") / ".env", Path(".env"))
+
+# .env.ktx.example 의 "<...>" 자리표시자를 실값 대신 그대로 남겨둔 경우 —
+# 문자 그대로 파일 경로/역명 등에 쓰이면 (예: KTXA_CDP_USER_DATA_DIR 가
+# "<사용자별 Chrome 프로필 폴더 경로>" 그대로 Chrome --user-data-dir 로 들어가
+# 그 이름의 디렉터리가 실제로 생겨버림) 조용히 이상 동작하므로, 값을 채우지
+# 않은 것과 동일하게(빈 문자열) 취급한다.
+_PLACEHOLDER_RE = re.compile(r"^<.*>$")
 
 
 class ConfigError(RuntimeError):
@@ -114,6 +122,15 @@ class KTXAConfig(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     # ─ validators ─
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_placeholders(cls, data):
+        if isinstance(data, dict):
+            for k, v in list(data.items()):
+                if isinstance(v, str) and _PLACEHOLDER_RE.match(v.strip()):
+                    data[k] = ""
+        return data
+
     @field_validator("ktxa_date", mode="before")
     @classmethod
     def _parse_date(cls, v):
@@ -226,6 +243,12 @@ class KTXAConfig(BaseModel):
 
     @model_validator(mode="after")
     def _final(cls, values: "KTXAConfig"):
+        if values.ktxa_date < date.today():
+            raise ValueError(
+                f"KTXA_DATE({values.ktxa_date})가 이미 지난 날짜입니다 — 오늘({date.today()}) "
+                "이후 날짜로 설정하세요 (Chrome 을 띄운 뒤 date picker 에서 지난 날짜를 "
+                "못 찾아 한참 뒤에야 실패하므로, 여기서 먼저 걸러낸다)"
+            )
         if values.ktxa_reserve_limit < 0:
             raise ValueError("KTXA_RESERVE_LIMIT must be >= 0 (0=전부)")
         if values.ktxa_poll_min <= 0:

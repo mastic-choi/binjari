@@ -3063,18 +3063,42 @@ for (const id of ['KTXA_ORIGIN', 'KTXA_DEST', 'KTXA_DATE']) {
 }
 
 // ── 예매 설정 / 환경 설정 탭 분리 (?tab=env) ──
-const PAGE_TAB = new URLSearchParams(location.search).get('tab') === 'env' ? 'env' : 'trip';
-document.querySelectorAll('.sec-trip').forEach(s => { s.style.display = PAGE_TAB === 'trip' ? '' : 'none'; });
-document.querySelectorAll('.sec-env').forEach(s => { s.style.display = PAGE_TAB === 'env' ? '' : 'none'; });
-const currentNav = document.getElementById(PAGE_TAB === 'env' ? 'nav-env' : 'nav-trip');
-currentNav.classList.add('on');
-currentNav.setAttribute('aria-current', 'page');
-if (PAGE_TAB === 'env') {
-  document.title = 'binjari — 환경 설정';
-  document.getElementById('settingsEyebrow').textContent = 'APP PREFERENCES';
-  document.getElementById('settingsTitle').textContent = '환경 설정';
-  document.getElementById('settingsSubtitle').textContent = '로그인과 결제, 알림 정보를 한곳에서 안전하게 관리하세요.';
+// 두 탭 모두 이 페이지 하나에 같이 렌더링돼 있고 표시만 토글하는 구조라,
+// nav 클릭을 가로채 pushState 로 전환한다 (전체 새로고침을 하면
+// /api/settings 를 다시 읽어와 폼을 덮어써서, 다른 탭에 저장 안 한 입력이
+// 사라지는 문제가 있었다).
+let PAGE_TAB = 'trip';
+function applyTab(tab, push) {
+  PAGE_TAB = tab === 'env' ? 'env' : 'trip';
+  document.querySelectorAll('.sec-trip').forEach(s => { s.style.display = PAGE_TAB === 'trip' ? '' : 'none'; });
+  document.querySelectorAll('.sec-env').forEach(s => { s.style.display = PAGE_TAB === 'env' ? '' : 'none'; });
+  document.getElementById('nav-trip').classList.toggle('on', PAGE_TAB === 'trip');
+  document.getElementById('nav-env').classList.toggle('on', PAGE_TAB === 'env');
+  const currentNav = document.getElementById(PAGE_TAB === 'env' ? 'nav-env' : 'nav-trip');
+  const otherNav = document.getElementById(PAGE_TAB === 'env' ? 'nav-trip' : 'nav-env');
+  currentNav.setAttribute('aria-current', 'page');
+  otherNav.removeAttribute('aria-current');
+  const eyebrow = PAGE_TAB === 'env' ? 'APP PREFERENCES' : 'BOOKING SETUP';
+  const title = PAGE_TAB === 'env' ? '환경 설정' : '예매 설정';
+  const subtitle = PAGE_TAB === 'env'
+    ? '로그인과 결제, 알림 정보를 한곳에서 안전하게 관리하세요.'
+    : '여정과 좌석을 정하고, 원하는 열차가 열릴 때까지 감시하세요.';
+  document.title = 'binjari — ' + title;
+  document.getElementById('settingsEyebrow').textContent = eyebrow;
+  document.getElementById('settingsTitle').textContent = title;
+  document.getElementById('settingsSubtitle').textContent = subtitle;
+  window.CHAT_TAB = 'settings';
+  window.CHAT_GREETING = PAGE_TAB === 'env'
+    ? '환경설정을 말로 바꿔보세요.\\n예: "결제까지 자동으로 하고 Teams 알림 켜줘"'
+    : '설정을 말로 바꿔보세요.\\n예: "다음주 금요일 아침 수서→부산, 어른 2명 특실로 하고 저장해줘"';
+  if (push) history.pushState({ tab: PAGE_TAB }, '', PAGE_TAB === 'env' ? '/settings?tab=env' : '/settings');
 }
+applyTab(new URLSearchParams(location.search).get('tab') === 'env' ? 'env' : 'trip', false);
+document.getElementById('nav-trip').addEventListener('click', (e) => { e.preventDefault(); applyTab('trip', true); });
+document.getElementById('nav-env').addEventListener('click', (e) => { e.preventDefault(); applyTab('env', true); });
+window.addEventListener('popstate', (e) => {
+  applyTab((e.state && e.state.tab) || (new URLSearchParams(location.search).get('tab') === 'env' ? 'env' : 'trip'), false);
+});
 
 // 자주 쓰는 구간 칩 클릭 → 여정 폼 반영
 window.applyRoute = function (o, d) {
@@ -3087,11 +3111,7 @@ window.applyRoute = function (o, d) {
   formDirty = true;
 };
 
-// ── 채팅 패널 연동 ──
-window.CHAT_TAB = 'settings';
-window.CHAT_GREETING = PAGE_TAB === 'env'
-  ? '환경설정을 말로 바꿔보세요.\\n예: "결제까지 자동으로 하고 Teams 알림 켜줘"'
-  : '설정을 말로 바꿔보세요.\\n예: "다음주 금요일 아침 수서→부산, 어른 2명 특실로 하고 저장해줘"';
+// ── 채팅 패널 연동 (CHAT_TAB/CHAT_GREETING 은 applyTab() 이 설정) ──
 window.applyChatUpdates = function (u, action) {
   let paxTouched = false;
   for (const [k, val] of Object.entries(u)) {
