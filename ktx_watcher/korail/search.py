@@ -167,54 +167,33 @@ def _click_day(page: Page, day: int, year: Optional[int] = None, month: Optional
 
 
 def _click_hour(page: Page, hour: int) -> bool:
-    """시각 선택. timeSelect 는 slick 캐러셀 (한 번에 5개만 노출) —
-    비노출 anchor 는 aria-disabled=true 라 클릭이 무효 (2026-08-19 CDP 실측).
-    목표 시각이 화면 밖이면 화살표로 스크롤한 뒤 클릭한다.
+    """시각 선택.
+
+    NOTE (2026-09-15 실측): timeSelect 앵커의 aria-disabled="true" 는 실제
+    클릭 가능 여부와 무관했다 — aria-disabled=true 인 앵커를 target.click() 해도
+    "XX시 이후 출발" 로 정상 반영됨 (슬릭 캐러셀의 접근성/포커스 관리용 속성일
+    뿐, 진짜 비활성 상태가 아니었다). 예전엔 이걸 클릭 가능 여부로 오판해서
+    멀쩡한 시각도 스크롤-폴백으로 흘려보내다 결국 요청과 무관한 00시에
+    정착하는 버그가 있었다 (그래서 매 검색이 00시 기준으로 진행되고
+    실제로 감시하려던 시간대 열차는 후보에 아예 안 잡혔다). 24개 시각이
+    전부 DOM 에 이미 존재하므로 캐러셀 스크롤 없이 텍스트로 찾아 바로 클릭한다.
     """
     texts = [f"{hour}시", f"{hour:02d}시"]
-    probe_js = """(texts) => {
-        const root = document.querySelector('.layerWrap.type_date-pop_wrap .timeSelect');
-        if (!root) return 'absent';
-        const slides = [...root.querySelectorAll('.slick-slide')];
-        let target = null, targetIdx = -1, firstActive = -1;
-        slides.forEach((s, i) => {
-            const a = s.querySelector('a');
-            if (s.classList.contains('slick-active') && firstActive < 0) firstActive = i;
-            if (!target && a && texts.includes((a.textContent || '').trim())) {
-                target = a; targetIdx = i;
-            }
-        });
-        // 캐러셀이 아닌 (구형) 평면 목록 fallback
-        if (!slides.length) {
+    result = page.evaluate(
+        """(texts) => {
+            const root = document.querySelector('.layerWrap.type_date-pop_wrap .timeSelect');
+            if (!root) return 'absent';
             for (const a of root.querySelectorAll('a')) {
                 if (texts.includes((a.textContent || '').trim())) {
-                    if (a.getAttribute('aria-disabled') === 'true') return 'absent';
-                    a.click(); return 'clicked';
+                    a.click();
+                    return 'clicked';
                 }
             }
             return 'absent';
-        }
-        if (!target) return 'absent';
-        if (target.getAttribute('aria-disabled') !== 'true') { target.click(); return 'clicked'; }
-        return targetIdx < firstActive ? 'prev' : 'next';
-    }"""
-    arrow_js = """(dir) => {
-        const btn = document.querySelector(
-            '.layerWrap.type_date-pop_wrap .timeSelect .slick-' + dir);
-        if (!btn || btn.classList.contains('slick-disabled')) return false;
-        btn.click(); return true;
-    }"""
-    for _ in range(24):
-        state = page.evaluate(probe_js, texts)
-        if state == "clicked":
-            return True
-        if state == "absent":
-            return False
-        if not page.evaluate(arrow_js, state):
-            return False  # 화살표 끝까지 갔는데 목표 시각 미노출
-        # slick 애니메이션(~0.5s) 중 클릭은 무시됨 — humanize 여부와 무관하게 대기
-        page.wait_for_timeout(650)
-    return False
+        }""",
+        texts,
+    )
+    return result == "clicked"
 
 
 def _set_date(page: Page, target: _date, hour: int) -> None:
@@ -739,6 +718,7 @@ def perform_search(
     page = client.main_page()
     cur_url = page.url or ""
     on_result = "/search/list" in cur_url
+    hour = config.ktxa_times[0].hour if config.ktxa_times else 8
     if on_result:
         # 페이지가 설정과 다른 날짜를 보고 있으면 reload 반복은 무의미 — 폼 재진입.
         # (2026-08-19 실측: 시작 시 stale 설정으로 오늘 페이지가 잡히면 영원히 후보 0건)
@@ -766,6 +746,17 @@ def perform_search(
             return []
         if config.ktxa_include_srt:
             _ensure_srt_on_result(page)
+        # reload 는 페이지를 처음 상태로 되돌려 출발 시각이 00:00 으로 리셋될 수 있다
+        # (2026-09-15 실측: 날짜는 유지되지만 시각이 풀려서 이후 iteration 이 전부
+        # 00시 기준 결과를 후보 매칭해 계속 0건이 나옴). _set_date 는 이미 원하는
+        # 값이면 picker 를 열지 않고 바로 반환하므로 매 iteration 호출해도 저렴하다.
+        try:
+            _set_date(page, config.ktxa_date, hour=hour)
+            human_pause(0.5, 1.0)
+        except SiteLayoutChanged:
+            raise
+        except Exception as e:
+            LOGGER.warning("reload 후 출발 시각 재확인 실패: %s — 계속 진행", e)
         try:
             raw = _parse_result_rows(page)
         except Exception as e:
@@ -780,7 +771,6 @@ def perform_search(
             fill_search_form(page, config)
         else:
             # 날짜만 따로 확인 (역은 같지만 날짜 다를 수 있음)
-            hour = config.ktxa_times[0].hour if config.ktxa_times else 8
             _set_date(page, config.ktxa_date, hour=hour)
             human_pause(0.8, 1.4)
             # 인원 구성은 '총 N명' 라벨로 판별 불가 → 팝업 열어 확인
