@@ -13,6 +13,7 @@ import logging
 import os
 import socket
 import subprocess
+import sys
 import time
 import urllib.request
 from pathlib import Path
@@ -50,9 +51,29 @@ def _force_ipv4_for_localhost() -> None:
 # 모듈 import 시점에 즉시 적용 (urllib / playwright 모두 영향받기 전에)
 _force_ipv4_for_localhost()
 
-DEFAULT_CHROME_PATHS = (
+DEFAULT_CHROME_PATHS_WIN = (
     r"C:\Program Files\Google\Chrome\Application\chrome.exe",
     r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+)
+
+DEFAULT_CHROME_PATHS_MAC = (
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    str(Path.home() / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+)
+
+DEFAULT_CHROME_PATHS_LINUX = (
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
+)
+
+DEFAULT_CHROME_PATHS = (
+    DEFAULT_CHROME_PATHS_WIN
+    if os.name == "nt"
+    else DEFAULT_CHROME_PATHS_MAC
+    if sys.platform == "darwin"
+    else DEFAULT_CHROME_PATHS_LINUX
 )
 
 
@@ -183,6 +204,9 @@ class ChromeLauncher:
         창이 CDP 준비보다 늦게 뜰 수 있어 짧게 재시도한다.
         """
         if not self.vdesk:
+            return
+        if os.name != "nt":
+            LOGGER.debug("vdesk 이동 skip: Windows 전용 기능 (현재 플랫폼=%s)", sys.platform)
             return
         script = Path(__file__).with_name("vdesk_move.ps1")
         cmd = [

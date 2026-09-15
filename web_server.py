@@ -2,9 +2,13 @@
 
 실행::
 
-    python3 -m uvicorn web_server:app --host 0.0.0.0 --port 8000
+    python3 -m uvicorn web_server:app --host 127.0.0.1 --port 8000
 
 브라우저에서 http://localhost:8000 접속 → 폼 입력 → 조회.
+
+/api/settings, /api/watcher/* 등이 인증 없이 로그인 정보·카드번호를 다루므로
+반드시 127.0.0.1(로컬)로만 바인딩한다. LAN 공유가 꼭 필요하면 리버스 프록시나
+방화벽으로 접근을 제한한 뒤에만 --host 0.0.0.0 을 고려할 것.
 
 기존 ktx_watcher 의 Playwright 검색 모듈을 재사용하지만
 필터(좌석 잔여/시간 허용) 는 풀어 두어 해당 날짜의 *모든* 스케줄을 반환한다.
@@ -111,6 +115,12 @@ def _write_env_values(updates: Dict[str, str]) -> None:
         new_lines += ["", "# ─ 웹 설정(/settings)에서 추가된 키 ─"]
         new_lines += [f"{k}={v}" for k, v in remaining.items()]
     ENV_PATH.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    try:
+        # 로그인 비밀번호·카드번호 등 평문 비밀값이 들어있으므로 소유자만 읽게 제한
+        # (Windows 는 os.chmod 가 사실상 no-op — ACL 이 아닌 read-only 비트만 영향)
+        os.chmod(ENV_PATH, 0o600)
+    except OSError:
+        LOGGER.warning(".env.ktx 권한 설정 실패 (무시하고 계속)")
 
 
 def _validate_env(values: Dict[str, str]) -> Optional[str]:
@@ -2647,7 +2657,8 @@ let times = [];   // ['09:00', ...]
   const mm = document.getElementById('PAY_CARD_MM');
   for (let m = 1; m <= 12; m++) mm.add(new Option(String(m).padStart(2,'0')));
   const yy = document.getElementById('PAY_CARD_YY');
-  for (let y = 2025; y <= 2037; y++) yy.add(new Option(y));
+  const thisYear = new Date().getFullYear();
+  for (let y = thisYear - 1; y <= thisYear + 15; y++) yy.add(new Option(y));
   const grid = document.getElementById('paxGrid');
   for (const t of PAX_TYPES) {
     const d = document.createElement('div');
@@ -3439,6 +3450,7 @@ def _find_claude() -> Optional[str]:
         return exe
     home = Path.home()
     candidates = [
+        home / ".local" / "bin" / "claude",
         home / ".local" / "bin" / "claude.exe",
         Path(os.environ.get("APPDATA", "")) / "npm" / "claude.cmd",
     ]
@@ -3895,4 +3907,4 @@ def healthz() -> Dict[str, str]:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000)

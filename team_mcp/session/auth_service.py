@@ -122,8 +122,13 @@ class AuthService:
                 - expires_at: 만료 시간
         """
         try:
-            # State 검증 (임시로 스킵 - 프로덕션에서는 DB나 Redis 사용 권장)
-            logger.warning(f"State validation skipped for: {state[:10]}... (Consider using shared state storage)")
+            # State 검증 (CSRF 방지) — start_auth_flow 가 발급한 state 인지, 만료(10분) 전인지 확인.
+            auth_info = self.auth_states.pop(state, None)
+            if auth_info is None:
+                raise Exception("Invalid or already-used OAuth state")
+            age = (datetime.now(timezone.utc) - auth_info["created_at"]).total_seconds()
+            if age > 600:
+                raise Exception("OAuth state expired")
 
             # Authorization code로 토큰 교환
             token_result = await self._exchange_code_for_tokens(authorization_code)
@@ -138,9 +143,6 @@ class AuthService:
             # 토큰과 사용자 정보 저장
             self.auth_db.save_user(email, user_info)
             self.auth_db.save_token(email, token_result)
-
-            # State 정리 (state 검증 스킵 중이므로 주석 처리)
-            # del self.auth_states[state]
 
             logger.info(f"Authentication successful for {email}")
 

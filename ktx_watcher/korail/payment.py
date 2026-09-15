@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import random
 import time as _time
+from datetime import date
 from typing import Any, Dict
 
 from playwright.sync_api import Page, TimeoutError as PWTimeoutError
@@ -77,8 +78,10 @@ def _parse_card(config: KTXAConfig) -> Dict[str, str]:
     except Exception:
         errs.append("PAY_CARD_MM 형식")
     mm = f"{int(mm):02d}" if mm else mm
-    if not (len(yyyy) == 4 and 2025 <= int(yyyy) <= 2037):
-        errs.append("PAY_CARD_YY 2025..2037 4자리")
+    this_year = date.today().year
+    yy_min, yy_max = this_year - 1, this_year + 15  # 카드 유효기간 상식 범위, 해마다 갱신 불필요
+    if not (len(yyyy) == 4 and yy_min <= int(yyyy) <= yy_max):
+        errs.append(f"PAY_CARD_YY {yy_min}..{yy_max} 4자리")
     if not (len(pw2) == 2 and pw2.isdigit()):
         errs.append("PAY_CARD_PW2 2자리")
     if not (len(id6) == 6 and id6.isdigit()):
